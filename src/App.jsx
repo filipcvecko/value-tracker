@@ -110,14 +110,16 @@ export default function App() {
     setLoadingBetfair(true)
     try {
       let events = []
-      let page = 1
-      while (page <= 12) {
+      const first = await fetch(`/api/betsapi?endpoint=betfair/ex/upcoming&sport_id=1&page=1`)
+      const firstJson = await first.json()
+      if (firstJson?.results) events = events.concat(firstJson.results)
+      const total = firstJson?.pager?.total || 0
+      const perPage = firstJson?.pager?.per_page || 50
+      const totalPages = Math.min(Math.ceil(total / perPage), 15)
+      for (let page = 2; page <= totalPages; page++) {
         const res = await fetch(`/api/betsapi?endpoint=betfair/ex/upcoming&sport_id=1&page=${page}`)
         const json = await res.json()
         if (json?.results) events = events.concat(json.results)
-        if (!json?.pager?.next_page && json?.pager?.next_page !== 0) break
-        if (json?.results?.length === 0) break
-        page++
       }
       setBetfairEvents(events)
     } catch (e) { console.error(e) }
