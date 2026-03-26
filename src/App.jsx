@@ -30,24 +30,42 @@ function fuzzyScore(a, b) {
   return matches / Math.max(tokA.length, tokB.length)
 }
 
-// Nájdi Betfair event — najprv DB, potom fuzzy
-function findBetfairEvent(homeName, awayName, betfairEvents, teamNameDb) {
+// Validácia kickoff času — Betfair event time vs náš kickoff (±3 hodiny)
+// Betfair API vracia time ako unix timestamp v ev.time alebo ev.starts
+function kickoffValid(ev, kickoffIso, toleranceHours = 3) {
+  if (!kickoffIso) return true // ak nemáme kickoff, neblokujeme
+  const evTime = ev.time ? ev.time * 1000 : ev.starts ? new Date(ev.starts).getTime() : null
+  if (!evTime) return true // Betfair nám nedal čas, neblokujeme
+  const diff = Math.abs(evTime - new Date(kickoffIso).getTime())
+  return diff <= toleranceHours * 60 * 60 * 1000
+}
+
+// Nájdi Betfair event — najprv DB, potom fuzzy, vždy validuj kickoff
+function findBetfairEvent(homeName, awayName, betfairEvents, teamNameDb, kickoffIso) {
   const dbHome = teamNameDb.find(t => t.footystats_name.toLowerCase() === homeName.toLowerCase())
   const dbAway = teamNameDb.find(t => t.footystats_name.toLowerCase() === awayName.toLowerCase())
 
-  // Obaja v DB — hľadaj presný event
+  // Obaja v DB — hľadaj presný event + validuj čas
   if (dbHome && dbAway) {
     const ev = betfairEvents.find(e =>
       e.home?.name?.toLowerCase() === dbHome.betfair_name.toLowerCase() &&
-      e.away?.name?.toLowerCase() === dbAway.betfair_name.toLowerCase()
+      e.away?.name?.toLowerCase() === dbAway.betfair_name.toLowerCase() &&
+      kickoffValid(e, kickoffIso)
     )
     if (ev) return { event: ev, score: 1.0, source: 'db' }
+    // Tímy sú v DB ale čas nesedí — varuj, nespadni na fuzzy automaticky
+    const evNoTime = betfairEvents.find(e =>
+      e.home?.name?.toLowerCase() === dbHome.betfair_name.toLowerCase() &&
+      e.away?.name?.toLowerCase() === dbAway.betfair_name.toLowerCase()
+    )
+    if (evNoTime) return { event: evNoTime, score: 0.85, source: 'db_time_mismatch' }
   }
 
-  // Jeden v DB — kotva + fuzzy pre druhého
+  // Jeden v DB — kotva + fuzzy pre druhého + validuj čas
   if (dbHome || dbAway) {
     let best = null, bestScore = 0
     for (const ev of betfairEvents) {
+      if (!kickoffValid(ev, kickoffIso)) continue
       const sh = dbHome
         ? (ev.home?.name?.toLowerCase() === dbHome.betfair_name.toLowerCase() ? 1.0 : 0)
         : fuzzyScore(homeName, ev.home?.name || '')
@@ -60,9 +78,10 @@ function findBetfairEvent(homeName, awayName, betfairEvents, teamNameDb) {
     if (best) return { event: best, score: bestScore, source: 'db+fuzzy' }
   }
 
-  // Čistý fuzzy
+  // Čistý fuzzy + validuj čas
   let best = null, bestScore = 0
   for (const ev of betfairEvents) {
+    if (!kickoffValid(ev, kickoffIso)) continue
     const sh = fuzzyScore(homeName, ev.home?.name || '')
     const sa = fuzzyScore(awayName, ev.away?.name || '')
     const total = (sh + sa) / 2
@@ -195,7 +214,7 @@ export default function App() {
       )
       if (existing?.confirmed) continue
 
-      const result = findBetfairEvent(match.home_name, match.away_name, betfairEvents, teamNameDb)
+      const result = findBetfairEvent(match.home_name, match.away_name, betfairEvents, teamNameDb, match.kick_off)
       if (result) {
         const { event: best, score, source } = result
         const autoConfirm = score >= 0.7 || source === 'db'
@@ -503,7 +522,10 @@ export default function App() {
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600, color: 'var(--text)' }}>{mp.footystats_home} vs {mp.footystats_away}</div>
                         {mp.confirmed && mp.betfair_home
-                          ? <div style={{ fontSize: 11, color: 'var(--green)', marginTop: 2 }}>✓ {mp.betfair_home} vs {mp.betfair_away}</div>
+                          ? <div style={{ fontSize: 11, color: mp.match_source === 'db_time_mismatch' ? 'var(--yellow)' : 'var(--green)', marginTop: 2 }}>
+                              {mp.match_source === 'db_time_mismatch' ? '⚠ ' : '✓ '}{mp.betfair_home} vs {mp.betfair_away}
+                              {mp.match_source === 'db_time_mismatch' && <span style={{ marginLeft: 6, fontSize: 10 }}>(čas nesedí — over manuálne)</span>}
+                            </div>
                           : <div style={{ fontSize: 11, color: 'var(--yellow)', marginTop: 2 }}>{mp.betfair_home ? `⚠ Návrh: ${mp.betfair_home} vs ${mp.betfair_away}` : '❌ Nenájdené na Betfaire'}</div>
                         }
                       </div>
