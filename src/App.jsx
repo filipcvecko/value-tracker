@@ -192,13 +192,19 @@ export default function App() {
         }
 
         const ou25 = mkts.find(m => m.description?.marketName === 'Over/Under 2.5 Goals')
-        const ou30 = mkts.find(m => m.description?.marketName === 'Over/Under 3.0 Goals')
-          || mkts.find(m => m.description?.marketName === 'Over/Under 3.5 Goals')
+        const ou30standard = mkts.find(m => m.description?.marketName === 'Over/Under 3.0 Goals')
+        const goalLines = mkts.find(m => m.description?.marketName === 'Goal Lines')
+        const getGoalLineBack = (handicap, side) => {
+          if (!goalLines) return null
+          const runner = goalLines.runners?.find(r => r.handicap === handicap && r.description?.runnerName?.toLowerCase().startsWith(side))
+          return runner?.exchange?.availableToBack?.[0]?.price || null
+        }
+        const ou30 = ou30standard
 
         const bo25 = getBack(ou25, 'over')
         const bu25 = getBack(ou25, 'under')
-        const bo30 = getBack(ou30, 'over')
-        const bu30 = getBack(ou30, 'under')
+        const bo30 = ou30standard ? getBack(ou30, 'over') : getGoalLineBack(3, 'over')
+        const bu30 = ou30standard ? getBack(ou30, 'under') : getGoalLineBack(3, 'under')
         const comm = 0.05
 
         const ev25 = bo25 ? calcBackEV(match.p_over25, bo25, comm) : null
