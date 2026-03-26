@@ -397,20 +397,18 @@ export default function App() {
                             ✓ {mapping.betfair_home} vs {mapping.betfair_away}
                           </span>
                         )}
-                        {/* FIX: "Zmeniť mapping" button in dashboard */}
-                        {isConfirmed && (
-                          <button
-                            className="btn-yellow"
-                            style={{ padding: '3px 8px', fontSize: 10 }}
-                            onClick={() => {
-                              if (betfairEvents.length === 0) loadBetfairEvents()
-                              setChangingMapping(prev => ({ ...prev, [dashSearchKey]: !prev[dashSearchKey] }))
-                              setMappingSearch(prev => ({ ...prev, [dashSearchKey]: '' }))
-                            }}
-                          >
-                            {isChanging ? '✕ Zatvoriť' : '✏ Zmeniť mapping'}
-                          </button>
-                        )}
+                        {/* "+ Mapping" for unconfirmed, "Zmeniť" for confirmed */}
+                        <button
+                          className={isConfirmed ? 'btn-yellow' : 'btn-green'}
+                          style={{ padding: '3px 8px', fontSize: 10 }}
+                          onClick={() => {
+                            if (betfairEvents.length === 0) loadBetfairEvents()
+                            setChangingMapping(prev => ({ ...prev, [dashSearchKey]: !prev[dashSearchKey] }))
+                            setMappingSearch(prev => ({ ...prev, [dashSearchKey]: '' }))
+                          }}
+                        >
+                          {isChanging ? '✕ Zatvoriť' : isConfirmed ? '✏ Zmeniť mapping' : '+ Pridať mapping'}
+                        </button>
                       </div>
 
                       {/* FIX: inline search for changing mapping */}
@@ -424,7 +422,10 @@ export default function App() {
                             onChange={e => setMappingSearch(prev => ({ ...prev, [dashSearchKey]: e.target.value }))}
                           />
                           {loadingBetfair && (
-                            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>⏳ Načítavam eventy...</div>
+                            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>⏳ Načítavam Betfair eventy...</div>
+                          )}
+                          {!loadingBetfair && betfairEvents.length === 0 && (
+                            <div style={{ fontSize: 10, color: 'var(--yellow)', marginTop: 4 }}>⚠ Eventy nie sú načítané — klikni "Načítať Betfair eventy" v Mapping záložke</div>
                           )}
                           {dashResults.length > 0 && (
                             <div style={{
