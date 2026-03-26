@@ -222,6 +222,7 @@ export default function App() {
           footystats_home: match.home_name, footystats_away: match.away_name,
           betfair_event_id: best.id, betfair_home: best.home?.name, betfair_away: best.away?.name,
           confirmed: autoConfirm,
+          match_score: Math.round(score * 100), // uloží napr. 38, 72, 100
         }, { onConflict: 'footystats_home,footystats_away' })
         if (autoConfirm)
           await saveTeamNames(match.home_name, best.home?.name, match.away_name, best.away?.name)
@@ -243,7 +244,12 @@ export default function App() {
         m.footystats_home === match.home_name && m.footystats_away === match.away_name &&
         m.confirmed && m.betfair_event_id
       )
+      // Blokuj ak match_score je nízky (pravdepodobne zlý match)
       if (!mapping) continue
+      if (mapping.match_score != null && mapping.match_score < 60) {
+        console.warn(`Skipping ${match.home_name} — match_score ${mapping.match_score}% príliš nízky`)
+        continue
+      }
       try {
         const res = await fetch(`/api/betsapi?endpoint=betfair/ex/event&event_id=${mapping.betfair_event_id}`)
         const json = await res.json()
@@ -524,7 +530,13 @@ export default function App() {
                         {mp.confirmed && mp.betfair_home
                           ? <div style={{ fontSize: 11, color: mp.match_source === 'db_time_mismatch' ? 'var(--yellow)' : 'var(--green)', marginTop: 2 }}>
                               {mp.match_source === 'db_time_mismatch' ? '⚠ ' : '✓ '}{mp.betfair_home} vs {mp.betfair_away}
+                              {mp.match_score != null && (
+                                <span style={{ marginLeft: 6, fontSize: 10, color: mp.match_score >= 70 ? 'var(--green)' : mp.match_score >= 60 ? 'var(--yellow)' : 'var(--red)', fontWeight: 700 }}>
+                                  {mp.match_score === 100 ? '🗄 DB' : `${mp.match_score}%`}
+                                </span>
+                              )}
                               {mp.match_source === 'db_time_mismatch' && <span style={{ marginLeft: 6, fontSize: 10 }}>(čas nesedí — over manuálne)</span>}
+                              {mp.match_score != null && mp.match_score < 60 && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--red)' }}>⚠ kurzy sa nestiahnu</span>}
                             </div>
                           : <div style={{ fontSize: 11, color: 'var(--yellow)', marginTop: 2 }}>{mp.betfair_home ? `⚠ Návrh: ${mp.betfair_home} vs ${mp.betfair_away}` : '❌ Nenájdené na Betfaire'}</div>
                         }
