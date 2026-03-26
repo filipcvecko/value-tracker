@@ -115,7 +115,8 @@ export default function App() {
         const res = await fetch(`/api/betsapi?endpoint=betfair/ex/upcoming&sport_id=1&page=${page}`)
         const json = await res.json()
         if (json?.results) events = events.concat(json.results)
-        if (!json?.pager?.next_page) break
+        if (!json?.pager?.next_page && json?.pager?.next_page !== 0) break
+        if (json?.results?.length === 0) break
         page++
       }
       setBetfairEvents(events)
