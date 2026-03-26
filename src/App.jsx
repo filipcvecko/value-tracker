@@ -49,6 +49,7 @@ const css = `
   .btn-primary { background: var(--accent); color: #fff; }
   .btn-ghost { cursor: pointer; background: transparent; border: 1px solid var(--border2); color: var(--text2); font-family: var(--mono); font-size: 11px; padding: 6px 12px; border-radius: 4px; }
   .btn-green { cursor: pointer; background: rgba(0,184,148,0.15); border: 1px solid rgba(0,184,148,0.4); color: var(--green); font-family: var(--mono); font-size: 11px; padding: 6px 12px; border-radius: 4px; font-weight: 700; }
+  .btn-yellow { cursor: pointer; background: rgba(253,203,110,0.12); border: 1px solid rgba(253,203,110,0.4); color: var(--yellow); font-family: var(--mono); font-size: 11px; padding: 6px 12px; border-radius: 4px; font-weight: 700; }
   .btn-danger { cursor: pointer; background: transparent; border: 1px solid rgba(214,48,49,0.3); color: var(--red); font-family: var(--mono); font-size: 11px; padding: 6px 10px; border-radius: 4px; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
@@ -73,7 +74,7 @@ const css = `
   .odds-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; }
   .odds-cell { background: var(--bg3); border-radius: 6px; padding: 8px 10px; }
   .odds-cell.has-value { background: rgba(0,184,148,0.08); border: 1px solid rgba(0,184,148,0.3); }
-  .mapping-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .mapping-row { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
   .mapping-row:last-child { border-bottom: none; }
   .pulse { animation: pulse 2s infinite; }
   @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.5 } }
@@ -88,6 +89,8 @@ export default function App() {
   const [betfairEvents, setBetfairEvents] = useState([])
   const [loadingBetfair, setLoadingBetfair] = useState(false)
   const [mappingSearch, setMappingSearch] = useState({})
+  // FIX: track which mapping rows are in "change" mode (even if already confirmed)
+  const [changingMapping, setChangingMapping] = useState({})
 
   const today = new Date().toISOString().slice(0, 10)
 
@@ -130,12 +133,15 @@ export default function App() {
     if (betfairEvents.length === 0) await loadBetfairEvents()
     setRefreshing(true)
 
+    // FIX: iterate over ALL today's matches, not just unmapped ones
+    // Also ensure every today match has a mapping row (even if unmatched)
     for (const match of matches) {
-      // Skip if already mapped
-      const existing = mappings.find(m => m.footystats_home === match.home_name && m.footystats_away === match.away_name)
-      if (existing) continue
+      const existing = mappings.find(m =>
+        m.footystats_home === match.home_name && m.footystats_away === match.away_name
+      )
+      // Skip only if already confirmed (unless user clicked "Zmeniť")
+      if (existing?.confirmed) continue
 
-      // Try fuzzy match
       let best = null, bestScore = 0
       for (const ev of betfairEvents) {
         const sh = fuzzyScore(match.home_name, ev.home?.name || '')
@@ -151,10 +157,9 @@ export default function App() {
           betfair_event_id: best.id,
           betfair_home: best.home?.name,
           betfair_away: best.away?.name,
-          confirmed: bestScore >= 0.7, // auto-confirm high confidence
+          confirmed: bestScore >= 0.7,
         }, { onConflict: 'footystats_home,footystats_away' })
       } else {
-        // Insert unmatched so user can fix manually
         await supabase.from('team_mapping').upsert({
           footystats_home: match.home_name,
           footystats_away: match.away_name,
@@ -173,7 +178,12 @@ export default function App() {
   async function refreshOdds() {
     setRefreshing(true)
     for (const match of matches) {
-      const mapping = mappings.find(m => m.footystats_home === match.home_name && m.footystats_away === match.away_name && m.confirmed && m.betfair_event_id)
+      const mapping = mappings.find(m =>
+        m.footystats_home === match.home_name &&
+        m.footystats_away === match.away_name &&
+        m.confirmed &&
+        m.betfair_event_id
+      )
       if (!mapping) continue
 
       try {
@@ -196,20 +206,21 @@ export default function App() {
         const goalLines = mkts.find(m => m.description?.marketName === 'Goal Lines')
         const getGoalLineBack = (handicap, side) => {
           if (!goalLines) return null
-          const runner = goalLines.runners?.find(r => r.handicap === handicap && r.description?.runnerName?.toLowerCase().startsWith(side))
+          const runner = goalLines.runners?.find(r =>
+            r.handicap === handicap && r.description?.runnerName?.toLowerCase().startsWith(side)
+          )
           return runner?.exchange?.availableToBack?.[0]?.price || null
         }
-        const ou30 = ou30standard
 
         const bo25 = getBack(ou25, 'over')
         const bu25 = getBack(ou25, 'under')
-        const bo30 = ou30standard ? getBack(ou30, 'over') : getGoalLineBack(3, 'over')
-        const bu30 = ou30standard ? getBack(ou30, 'under') : getGoalLineBack(3, 'under')
+        const bo30 = ou30standard ? getBack(ou30standard, 'over') : getGoalLineBack(3, 'over')
+        const bu30 = ou30standard ? getBack(ou30standard, 'under') : getGoalLineBack(3, 'under')
         const comm = 0.05
 
-        const ev25 = bo25 ? calcBackEV(match.p_over25, bo25, comm) : null
+        const ev25  = bo25 ? calcBackEV(match.p_over25,  bo25, comm) : null
         const evu25 = bu25 ? calcBackEV(match.p_under25, bu25, comm) : null
-        const ev30 = bo30 ? calcBackEV(match.p_over30, bo30, comm) : null
+        const ev30  = bo30 ? calcBackEV(match.p_over30,  bo30, comm) : null
         const evu30 = bu30 ? calcBackEV(match.p_under30, bu30, comm) : null
         const hasValue = [ev25, evu25, ev30, evu30].some(ev => ev != null && ev > 0.05)
 
@@ -218,9 +229,9 @@ export default function App() {
           betfair_event_id: mapping.betfair_event_id,
           back_over25: bo25, back_under25: bu25,
           back_over30: bo30, back_under30: bu30,
-          ev_over25: ev25 != null ? ev25 * 100 : null,
+          ev_over25:  ev25  != null ? ev25  * 100 : null,
           ev_under25: evu25 != null ? evu25 * 100 : null,
-          ev_over30: ev30 != null ? ev30 * 100 : null,
+          ev_over30:  ev30  != null ? ev30  * 100 : null,
           ev_under30: evu30 != null ? evu30 * 100 : null,
           value_found: hasValue,
         })
@@ -237,6 +248,26 @@ export default function App() {
       betfair_away: betfairAway,
       confirmed: true,
     }).eq('id', mappingId)
+    setChangingMapping(prev => ({ ...prev, [mappingId]: false }))
+    await loadData()
+  }
+
+  // FIX: also allow changing mapping from dashboard
+  async function changeMatchMapping(matchHomeName, matchAwayName, betfairEventId, betfairHome, betfairAway) {
+    await supabase.from('team_mapping').upsert({
+      footystats_home: matchHomeName,
+      footystats_away: matchAwayName,
+      betfair_event_id: betfairEventId,
+      betfair_home: betfairHome,
+      betfair_away: betfairAway,
+      confirmed: true,
+    }, { onConflict: 'footystats_home,footystats_away' })
+    await loadData()
+  }
+
+  // FIX: delete mapping row
+  async function deleteMapping(id) {
+    await supabase.from('team_mapping').delete().eq('id', id)
     await loadData()
   }
 
@@ -245,17 +276,14 @@ export default function App() {
     await loadData()
   }
 
-  // Get latest snapshot for each match
   function getLatestSnapshot(match) {
     const snaps = match.odds_snapshots || []
     if (!snaps.length) return null
     return snaps.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]
   }
 
-  const unmappedCount = matches.filter(m => {
-    const mp = mappings.find(x => x.footystats_home === m.home_name && x.footystats_away === m.away_name)
-    return !mp || !mp.confirmed
-  }).length
+  // FIX: count unconfirmed from ALL mappings, not just today's matches
+  const unmappedCount = mappings.filter(m => !m.confirmed).length
 
   const valueCount = matches.filter(m => {
     const snap = getLatestSnapshot(m)
@@ -280,7 +308,11 @@ export default function App() {
       </div>
 
       <div className="tabs">
-        {[['dashboard', `Dashboard (${matches.length})`], ['mapping', `Mapping (${unmappedCount} neopravených)`], ['add', '+ Pridať zápas']].map(([id, lbl]) => (
+        {[
+          ['dashboard', `Dashboard (${matches.length})`],
+          ['mapping', `Mapping (${unmappedCount} neopravených)`],
+          ['add', '+ Pridať zápas'],
+        ].map(([id, lbl]) => (
           <button key={id} className={`tab ${tab === id ? 'active' : ''}`} onClick={() => setTab(id)}>{lbl}</button>
         ))}
       </div>
@@ -314,16 +346,28 @@ export default function App() {
             )}
 
             {matches.map(match => {
-              const mapping = mappings.find(m => m.footystats_home === match.home_name && m.footystats_away === match.away_name)
+              const mapping = mappings.find(m =>
+                m.footystats_home === match.home_name && m.footystats_away === match.away_name
+              )
               const snap = getLatestSnapshot(match)
               const hasValue = snap?.value_found
               const isConfirmed = mapping?.confirmed
+              // FIX: per-match search state for dashboard "Zmeniť mapping"
+              const dashSearchKey = `dash_${match.id}`
+              const dashSearchVal = mappingSearch[dashSearchKey] || ''
+              const dashResults = dashSearchVal.length > 1
+                ? betfairEvents.filter(ev =>
+                    ev.home?.name?.toLowerCase().includes(dashSearchVal.toLowerCase()) ||
+                    ev.away?.name?.toLowerCase().includes(dashSearchVal.toLowerCase())
+                  ).slice(0, 6)
+                : []
+              const isChanging = !!changingMapping[dashSearchKey]
 
               const mkts = [
-                { label: 'O 2.5', fer: match.fer_over25, p: match.p_over25, back: snap?.back_over25, ev: snap?.ev_over25 },
-                { label: 'U 2.5', fer: match.fer_under25, p: match.p_under25, back: snap?.back_under25, ev: snap?.ev_under25 },
-                { label: 'O 3.0', fer: match.fer_over30, p: match.p_over30, back: snap?.back_over30, ev: snap?.ev_over30 },
-                { label: 'U 3.0', fer: match.fer_under30, p: match.p_under30, back: snap?.back_under30, ev: snap?.ev_under30 },
+                { label: 'O 2.5',  fer: match.fer_over25,  p: match.p_over25,  back: snap?.back_over25,  ev: snap?.ev_over25  },
+                { label: 'U 2.5',  fer: match.fer_under25, p: match.p_under25, back: snap?.back_under25, ev: snap?.ev_under25 },
+                { label: 'O 3.0',  fer: match.fer_over30,  p: match.p_over30,  back: snap?.back_over30,  ev: snap?.ev_over30  },
+                { label: 'U 3.0',  fer: match.fer_under30, p: match.p_under30, back: snap?.back_under30, ev: snap?.ev_under30 },
               ]
 
               return (
@@ -335,19 +379,79 @@ export default function App() {
                         {!isConfirmed && <span className="badge badge-no-match">⚠ Bez mappingu</span>}
                         {isConfirmed && !snap && <span className="badge badge-pending">Čaká na kurzy</span>}
                         <span style={{ fontWeight: 700, fontSize: 13 }}>{match.home_name} vs {match.away_name}</span>
-                        {match.league && <span style={{ fontSize: 10, color: 'var(--accent2)', background: 'rgba(108,92,231,0.1)', padding: '1px 6px', borderRadius: 3 }}>{match.league}</span>}
-                      </div>
-                      <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-                        λ {fmt2(match.lambda_h)} / {fmt2(match.lambda_a)}
-                        {match.kick_off && <span style={{ marginLeft: 8, color: 'var(--yellow)' }}>
-                          ⏰ {new Date(match.kick_off).toLocaleTimeString('sk', { hour: '2-digit', minute: '2-digit' })}
-                        </span>}
-                        {isConfirmed && mapping?.betfair_home && (
-                          <span style={{ marginLeft: 8, color: 'var(--green)', fontSize: 10 }}>
-                            ✓ {mapping.betfair_home} vs {mapping.betfair_away}
+                        {match.league && (
+                          <span style={{ fontSize: 10, color: 'var(--accent2)', background: 'rgba(108,92,231,0.1)', padding: '1px 6px', borderRadius: 3 }}>
+                            {match.league}
                           </span>
                         )}
                       </div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)', display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <span>λ {fmt2(match.lambda_h)} / {fmt2(match.lambda_a)}</span>
+                        {match.kick_off && (
+                          <span style={{ color: 'var(--yellow)' }}>
+                            ⏰ {new Date(match.kick_off).toLocaleTimeString('sk', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        )}
+                        {isConfirmed && mapping?.betfair_home && (
+                          <span style={{ color: 'var(--green)', fontSize: 10 }}>
+                            ✓ {mapping.betfair_home} vs {mapping.betfair_away}
+                          </span>
+                        )}
+                        {/* FIX: "Zmeniť mapping" button in dashboard */}
+                        {isConfirmed && (
+                          <button
+                            className="btn-yellow"
+                            style={{ padding: '3px 8px', fontSize: 10 }}
+                            onClick={() => {
+                              if (betfairEvents.length === 0) loadBetfairEvents()
+                              setChangingMapping(prev => ({ ...prev, [dashSearchKey]: !prev[dashSearchKey] }))
+                              setMappingSearch(prev => ({ ...prev, [dashSearchKey]: '' }))
+                            }}
+                          >
+                            {isChanging ? '✕ Zatvoriť' : '✏ Zmeniť mapping'}
+                          </button>
+                        )}
+                      </div>
+
+                      {/* FIX: inline search for changing mapping */}
+                      {isChanging && (
+                        <div style={{ position: 'relative', marginTop: 8, maxWidth: 340 }}>
+                          <input
+                            className="inp inp-sm"
+                            placeholder="Hľadaj na Betfaire..."
+                            value={dashSearchVal}
+                            autoFocus
+                            onChange={e => setMappingSearch(prev => ({ ...prev, [dashSearchKey]: e.target.value }))}
+                          />
+                          {loadingBetfair && (
+                            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>⏳ Načítavam eventy...</div>
+                          )}
+                          {dashResults.length > 0 && (
+                            <div style={{
+                              position: 'absolute', top: '100%', left: 0, right: 0,
+                              background: 'var(--bg3)', border: '1px solid var(--border)',
+                              borderRadius: 6, zIndex: 50, maxHeight: 200, overflowY: 'auto',
+                            }}>
+                              {dashResults.map(ev => (
+                                <div
+                                  key={ev.id}
+                                  style={{ padding: '8px 10px', cursor: 'pointer', fontSize: 11, borderBottom: '1px solid var(--border)' }}
+                                  onMouseEnter={e => e.currentTarget.style.background = 'var(--bg2)'}
+                                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                  onClick={async () => {
+                                    await changeMatchMapping(match.home_name, match.away_name, ev.id, ev.home?.name, ev.away?.name)
+                                    setChangingMapping(prev => ({ ...prev, [dashSearchKey]: false }))
+                                    setMappingSearch(prev => ({ ...prev, [dashSearchKey]: '' }))
+                                  }}
+                                >
+                                  <b>{ev.home?.name}</b> vs {ev.away?.name}
+                                  <span style={{ color: 'var(--text3)', marginLeft: 6, fontSize: 10 }}>{ev.league?.name || ''}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <button className="btn-danger" onClick={() => deleteMatch(match.id)}>✕</button>
                   </div>
@@ -387,7 +491,7 @@ export default function App() {
         {/* ── MAPPING ── */}
         {tab === 'mapping' && (
           <div>
-            <div style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
               <button className="btn btn-primary" onClick={autoMatch} disabled={loadingBetfair || refreshing}>
                 {loadingBetfair ? '⏳ Načítavam Betfair...' : refreshing ? '⏳ Matchujem...' : '🤖 Auto-match všetky'}
               </button>
@@ -397,58 +501,94 @@ export default function App() {
               <span style={{ fontSize: 11, color: 'var(--text3)' }}>{betfairEvents.length} Betfair eventov načítaných</span>
             </div>
 
-            {mappings.length === 0 && <div className="empty">Žiadne mappingy. Najprv pridaj zápasy a spusti Auto-match.</div>}
+            {mappings.length === 0 && (
+              <div className="empty">Žiadne mappingy. Najprv pridaj zápasy a spusti Auto-match.</div>
+            )}
 
             <div className="card" style={{ padding: 0 }}>
               {mappings.map(mp => {
-                const searchResults = (mappingSearch[mp.id] || '').length > 1
+                const isChangingThis = !!changingMapping[mp.id]
+                const searchVal = mappingSearch[mp.id] || ''
+                const searchResults = searchVal.length > 1
                   ? betfairEvents.filter(ev =>
-                      ev.home?.name?.toLowerCase().includes(mappingSearch[mp.id].toLowerCase()) ||
-                      ev.away?.name?.toLowerCase().includes(mappingSearch[mp.id].toLowerCase())
+                      ev.home?.name?.toLowerCase().includes(searchVal.toLowerCase()) ||
+                      ev.away?.name?.toLowerCase().includes(searchVal.toLowerCase())
                     ).slice(0, 8)
                   : []
 
                 return (
-                  <div key={mp.id} className="mapping-row">
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 600, color: 'var(--text)' }}>
-                        {mp.footystats_home} vs {mp.footystats_away}
+                  <div key={mp.id} className="mapping-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, color: 'var(--text)' }}>
+                          {mp.footystats_home} vs {mp.footystats_away}
+                        </div>
+                        {mp.confirmed && mp.betfair_home && (
+                          <div style={{ fontSize: 11, color: 'var(--green)', marginTop: 2 }}>
+                            ✓ {mp.betfair_home} vs {mp.betfair_away}
+                          </div>
+                        )}
+                        {!mp.confirmed && (
+                          <div style={{ fontSize: 11, color: 'var(--yellow)', marginTop: 2 }}>
+                            {mp.betfair_home
+                              ? `⚠ Návrh: ${mp.betfair_home} vs ${mp.betfair_away}`
+                              : '❌ Nenájdené na Betfaire'}
+                          </div>
+                        )}
                       </div>
-                      {mp.confirmed && mp.betfair_home && (
-                        <div style={{ fontSize: 11, color: 'var(--green)', marginTop: 2 }}>
-                          ✓ {mp.betfair_home} vs {mp.betfair_away}
-                        </div>
-                      )}
-                      {!mp.confirmed && (
-                        <div style={{ fontSize: 11, color: 'var(--yellow)', marginTop: 2 }}>
-                          {mp.betfair_home
-                            ? `⚠ Návrh: ${mp.betfair_home} vs ${mp.betfair_away}`
-                            : '❌ Nenájdené na Betfaire'}
-                        </div>
-                      )}
+
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+                        {/* Confirm button for unconfirmed with suggestion */}
+                        {mp.betfair_home && !mp.confirmed && (
+                          <button className="btn-green" onClick={() => confirmMapping(mp.id, mp.betfair_event_id, mp.betfair_home, mp.betfair_away)}>
+                            ✓ Potvrdiť
+                          </button>
+                        )}
+
+                        {/* FIX: "Zmeniť" button for ALL mappings (confirmed or not) */}
+                        <button
+                          className="btn-yellow"
+                          onClick={() => {
+                            if (betfairEvents.length === 0) loadBetfairEvents()
+                            setChangingMapping(prev => ({ ...prev, [mp.id]: !prev[mp.id] }))
+                            setMappingSearch(prev => ({ ...prev, [mp.id]: '' }))
+                          }}
+                        >
+                          {isChangingThis ? '✕' : '✏ Zmeniť'}
+                        </button>
+
+                        {/* FIX: delete mapping button */}
+                        <button
+                          className="btn-danger"
+                          title="Odstrániť mapping"
+                          onClick={() => deleteMapping(mp.id)}
+                        >
+                          ✕
+                        </button>
+                      </div>
                     </div>
 
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                      {mp.betfair_home && !mp.confirmed && (
-                        <button className="btn-green" onClick={() => confirmMapping(mp.id, mp.betfair_event_id, mp.betfair_home, mp.betfair_away)}>
-                          ✓ Potvrdiť
-                        </button>
-                      )}
-
-                      {/* Manual search */}
+                    {/* FIX: inline search panel for changing mapping */}
+                    {isChangingThis && (
                       <div style={{ position: 'relative' }}>
                         <input
                           className="inp inp-sm"
-                          style={{ width: 180 }}
+                          style={{ width: '100%' }}
                           placeholder="Hľadaj na Betfaire..."
-                          value={mappingSearch[mp.id] || ''}
+                          value={searchVal}
+                          autoFocus
                           onChange={e => setMappingSearch(prev => ({ ...prev, [mp.id]: e.target.value }))}
                         />
                         {searchResults.length > 0 && (
-                          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 6, zIndex: 50, maxHeight: 200, overflowY: 'auto' }}>
+                          <div style={{
+                            position: 'absolute', top: '100%', left: 0, right: 0,
+                            background: 'var(--bg3)', border: '1px solid var(--border)',
+                            borderRadius: 6, zIndex: 50, maxHeight: 220, overflowY: 'auto',
+                          }}>
                             {searchResults.map(ev => (
-                              <div key={ev.id}
-                                style={{ padding: '7px 10px', cursor: 'pointer', fontSize: 11, borderBottom: '1px solid var(--border)' }}
+                              <div
+                                key={ev.id}
+                                style={{ padding: '8px 10px', cursor: 'pointer', fontSize: 11, borderBottom: '1px solid var(--border)' }}
                                 onMouseEnter={e => e.currentTarget.style.background = 'var(--bg2)'}
                                 onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                                 onClick={async () => {
@@ -462,12 +602,16 @@ export default function App() {
                             ))}
                           </div>
                         )}
+                        {loadingBetfair && (
+                          <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>⏳ Načítavam Betfair eventy...</div>
+                        )}
+                        {!loadingBetfair && betfairEvents.length === 0 && (
+                          <div style={{ fontSize: 10, color: 'var(--yellow)', marginTop: 4 }}>
+                            ⚠ Betfair eventy nie sú načítané — klikni "Načítať Betfair eventy" hore
+                          </div>
+                        )}
                       </div>
-
-                      {mp.confirmed && (
-                        <span style={{ fontSize: 10, color: 'var(--green)' }}>✓ OK</span>
-                      )}
-                    </div>
+                    )}
                   </div>
                 )
               })}
